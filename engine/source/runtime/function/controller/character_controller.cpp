@@ -77,20 +77,93 @@ namespace Pilot
         hits.clear();
 
         // side pass
-        //if (physics_scene->sweep(
-        //    m_rigidbody_shape,
-        //    /**** [0] ****/,
-        //    /**** [1] ****/,
-        //    /**** [2] ****/,
-        //    hits))
-        //{
-        //    final_position += /**** [3] ****/;
-        //}
-        //else
+        Vector3 side_pass_displacement = Vector3::ZERO;
+
+        const bool clear_path = !physics_scene->sweep(m_rigidbody_shape,
+                                               world_transform.getMatrix(),
+                                               horizontal_direction,
+                                               horizontal_displacement.length(),
+                                               hits);
+
+        const bool touch_ground = isTouchGround();
+
+        if (clear_path)
         {
-            final_position += horizontal_displacement;
+	        side_pass_displacement += horizontal_displacement;
+	        world_transform.m_position += horizontal_displacement;
+	        // pull obj a little bit towards Z-, if still on the ground means character going down stairs
+            if (touch_ground)
+	        {
+		        const Vector3 forward_step_max = Vector3::NEGATIVE_UNIT_Z * m_capsule.m_half_height / 2;
+		        std::vector<PhysicsHitInfo> sub_hits;
+		        if (physics_scene->sweep(
+			        m_rigidbody_shape, 
+			        world_transform.getMatrix(), 
+			        Vector3::NEGATIVE_UNIT_Z, 
+			        forward_step_max.length(),
+			        sub_hits))
+		        {
+			        side_pass_displacement += sub_hits[0].hit_distance * Vector3::NEGATIVE_UNIT_Z;
+			        final_position += side_pass_displacement;
+			        return final_position;
+		        }
+	        }
+            final_position += side_pass_displacement;
+            return final_position;
         }
 
+        // pull obj a little bit towards Z+, if doesn't get blocked anymore means going upstairs
+        if (touch_ground)
+        {
+	        const Vector3 forward_step_max = Vector3::UNIT_Z * m_capsule.m_half_height / 2;
+	        world_transform.m_position += forward_step_max;
+
+	        std::vector<PhysicsHitInfo> sub_hits;
+	        if (!physics_scene->sweep(m_rigidbody_shape,
+	                                  world_transform.getMatrix(),
+	                                  horizontal_direction,
+	                                  horizontal_displacement.length(),
+	                                  sub_hits))
+	        {
+
+		        side_pass_displacement += forward_step_max + horizontal_displacement;
+		        world_transform.m_position += horizontal_displacement;
+		        std::vector<PhysicsHitInfo> sub_sub_hits;
+		        // sweep body to the ground
+		        if (physics_scene->sweep(
+			        m_rigidbody_shape, 
+			        world_transform.getMatrix(), 
+			        Vector3::NEGATIVE_UNIT_Z,
+			        forward_step_max.length(), 
+			        sub_sub_hits))
+		        {
+			        side_pass_displacement += sub_sub_hits[0].hit_distance * Vector3::NEGATIVE_UNIT_Z;
+			        final_position += side_pass_displacement;
+			        return final_position;
+		        }
+	        }
+
+	        world_transform.m_position -= forward_step_max;
+        }
+
+        Vector3 free_displacement = (hits[0].hit_distance - 0.001f) * horizontal_direction;
+
+        side_pass_displacement += free_displacement;
+
+        Vector3 surface_normal     = hits[0].hit_normal.normalisedCopy();
+        Vector3 sub_displacement   = horizontal_displacement - free_displacement;
+        sub_displacement           = sub_displacement.project(surface_normal);
+        Vector3 sub_direction      = sub_displacement.normalisedCopy();
+        world_transform.m_position = final_position + side_pass_displacement;
+
+        std::vector<PhysicsHitInfo> sub_hits;
+        // sweep again for corner case, we only used boolean result in case of jitters
+        if (!physics_scene->sweep(
+	        m_rigidbody_shape, world_transform.getMatrix(), sub_direction, sub_displacement.length(), sub_hits))
+        {
+	        side_pass_displacement += sub_displacement;
+        }
+        final_position += side_pass_displacement;
         return final_position;
     }
 
